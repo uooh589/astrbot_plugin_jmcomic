@@ -305,7 +305,7 @@ v1.0.0
         for p in missing:
             dst = os.path.join(image_dir, f"{p:05d}.jpg")
             try:
-                __import__("shutil").copy2(self.failed_placeholder, dst)
+                shutil.copy2(self.failed_placeholder, dst)
             except Exception as e:
                 logger.warning("fill %s: %s", dst, e)
 
@@ -326,13 +326,16 @@ v1.0.0
             photo_id = ep[0]
             photo_title = ep[2] if len(ep) >= 3 else f"第{len(chapters) + 1}话"
 
-            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
             try:
-                opt.download_photo(photo_id, extra=extra)
+                opt.download_photo(photo_id)
             except PartialDownloadFailedException as e:
                 logger.warning("Chapter %s partial failure: %s", photo_id, e)
 
-            self._fill_missing_images(os.path.join(work_dir, album.album_id, str(photo_id)))
+            ch_dir = os.path.join(work_dir, album.album_id, str(photo_id))
+            self._fill_missing_images(ch_dir)
+
+            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
+            opt.download_photo(photo_id, extra=extra)
 
             pdf_path = os.path.join(work_dir, f"{photo_id}.pdf")
             if not os.path.isfile(pdf_path):
@@ -344,11 +347,11 @@ v1.0.0
 
     # ── Sync bridge ────────────────────────────────────────
 
-    async def _run_sync(self, func, *args, **kwargs):
+    async def _run_sync(self, func, *args, timeout=300, **kwargs):
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            functools.partial(func, *args, **kwargs),
+        return await asyncio.wait_for(
+            loop.run_in_executor(self._executor, functools.partial(func, *args, **kwargs)),
+            timeout=timeout,
         )
 
     # ── Send PDFs via merge-forward ───────────────────────
@@ -517,7 +520,7 @@ v1.0.0
             return
 
         # Numeric ID → fetch album detail
-        if re.match(r"^\d{4,}$", args):
+        if args.isdigit():
             yield event.plain_result(f"正在查询本子 [{args}]...")
             album = await self._run_sync(self._get_album_detail_sync, args)
             if not album:
@@ -548,7 +551,11 @@ v1.0.0
 
         # Text search (author:name or keyword)
         yield event.plain_result(f"正在搜索「{args}」...")
-        album = await self._run_sync(self._search_album_sync, args)
+        try:
+            album = await self._run_sync(self._search_album_sync, args)
+        except Exception as e:
+            yield event.plain_result(f"搜索失败: {e}")
+            return
         if not album:
             yield event.plain_result(f"未找到「{args}」相关本子。")
             return
@@ -591,6 +598,9 @@ v1.0.0
                 uid = event.get_sender_id()
                 ckey = f"{uid}:{album_id}"
                 async with self._confirm_lock:
+                    for k in list(self._pending_confirm):
+                        if k.startswith(f"{uid}:"):
+                            del self._pending_confirm[k]
                     if self._pending_confirm.get(ckey) != True:
                         self._pending_confirm[ckey] = True
                         yield event.plain_result(
