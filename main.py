@@ -246,19 +246,19 @@ class JmcomicPlugin(Star):
             photo_id = ep[0]
             photo_title = ep[2] if len(ep) >= 3 else f"第{len(chapters) + 1}话"
 
-            # Pass 1: download images
+            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=False)
             try:
-                opt.download_photo(photo_id)
+                opt.download_photo(photo_id, extra=extra)
             except PartialDownloadFailedException as e:
                 logger.warning("Chapter %s partial failure: %s", photo_id, e)
 
-            # Fill gaps
+            # Fill gaps after PDF generation (PDF already has gaps)
             ch_dir = os.path.join(work_dir, album.album_id, str(photo_id))
             self._fill_missing_images(ch_dir)
 
-            # Pass 2: generate PDF (cache hit, doesn't re-download)
-            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
-            opt.download_photo(photo_id, extra=extra)
+            # Regenerate PDF with filled images
+            extra2 = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
+            opt.download_photo(photo_id, extra=extra2)
 
             pdf_path = os.path.join(work_dir, f"{photo_id}.pdf")
             if not os.path.isfile(pdf_path):
@@ -511,7 +511,6 @@ class JmcomicPlugin(Star):
             async with self._cancel_lock:
                 self._cancel_events[uid] = cancel_event
 
-            cleanup_cancel = True
             try:
                 chapters = await self._run_sync(
                     self._download_chapters_sync, album, work_dir, cancel_event,
@@ -524,7 +523,6 @@ class JmcomicPlugin(Star):
             finally:
                 async with self._cancel_lock:
                     self._cancel_events.pop(uid, None)
-                cleanup_cancel = False
 
             if not chapters:
                 self._cleanup_files(work_dir)
@@ -536,6 +534,9 @@ class JmcomicPlugin(Star):
             except Exception as e:
                 logger.exception("Send failed")
                 yield event.plain_result(f"发送失败: {e}")
+                return
+
+            yield event.plain_result(f"《{title}》发送完成")
 
             if self.auto_clean:
                 self._cleanup_files(work_dir)
