@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 __plugin_name__ = "astrbot_plugin_jmcomic"
 __plugin_version__ = "1.0.0"
-__plugin_author__ = "contributor"
+__plugin_author__ = "uooh"
 __plugin_desc__ = "JMComic 禁漫天堂下载插件 - 搜索、下载、PDF转换、排行榜"
 
 CATEGORY_HELP = """禁漫天堂分类列表:
@@ -56,7 +56,7 @@ CATEGORY_HELP = """禁漫天堂分类列表:
   m  - 本月"""
 
 
-@register("astrbot_plugin_jmcomic", "contributor",
+@register("astrbot_plugin_jmcomic", "uooh",
           "JMComic 禁漫天堂下载插件 - 搜索、下载、PDF转换、排行榜",
           "1.0.0")
 class JmcomicPlugin(Star):
@@ -326,20 +326,13 @@ v1.0.0
             photo_id = ep[0]
             photo_title = ep[2] if len(ep) >= 3 else f"第{len(chapters) + 1}话"
 
-            extra = Feature.export_pdf(
-                pdf_dir=work_dir,
-                filename_rule="Pid",
-                delete_original_file=True,
-            )
+            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
             try:
-                opt.download_photo(photo_id)
+                opt.download_photo(photo_id, extra=extra)
             except PartialDownloadFailedException as e:
                 logger.warning("Chapter %s partial failure: %s", photo_id, e)
 
             self._fill_missing_images(os.path.join(work_dir, album.album_id, str(photo_id)))
-
-            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
-            opt.download_photo(photo_id, extra=extra)
 
             pdf_path = os.path.join(work_dir, f"{photo_id}.pdf")
             if not os.path.isfile(pdf_path):
@@ -476,45 +469,6 @@ v1.0.0
 
         async for result in self._download_and_send(event, args):
             yield result
-
-        if not self._check_permission(event):
-            yield event.plain_result("你没有权限使用此命令。")
-            return
-
-        # Ranking random
-        if tag in ("周榜", "日榜", "月榜"):
-            yield event.plain_result(f"正在从{tag}随机抽取...")
-            try:
-                rankings = await self._run_sync(self._fetch_ranking_sync, tag)
-                if not rankings:
-                    yield event.plain_result("暂无排行数据。")
-                    return
-                album_id, title = random.choice(rankings)
-                yield event.plain_result(f"抽中《{title}》({album_id})")
-                async for r in self._download_and_send(event, str(album_id), initial_msg=title):
-                    yield r
-            except Exception as e:
-                logger.exception("Random ranking failed")
-                yield event.plain_result(f"随机获取失败: {e}")
-            return
-
-        yield event.plain_result(f"正在随机抽取{'〈' + tag + '〉' if tag else '本子'}...")
-        try:
-            pool = await self._run_sync(self._fetch_random_pool_sync, tag)
-            if not pool:
-                yield event.plain_result("未找到可用的本子。")
-                return
-
-            album_id, title = random.choice(pool)
-            yield event.plain_result(f"抽中《{title}》({album_id})")
-
-            async for result in self._download_and_send(event, str(album_id),
-                                                         initial_msg=title):
-                yield result
-
-        except Exception as e:
-            logger.exception("Random failed")
-            yield event.plain_result(f"随机获取失败: {e}")
 
     @filter.command("jmr")
     async def handle_jmr(self, event: AstrMessageEvent):
