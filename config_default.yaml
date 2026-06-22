@@ -1,35 +1,19 @@
 # JMComic Plugin Configuration
-# Copy this file and adjust for your environment.
 
-# ── Download Paths ──
-download_dir: /AstrBot/data/jmcomic/  # 下载根目录 (AstrBot与NapCat共享卷)
-temp_pdf_dir: /AstrBot/data/jmcomic/   # 临时 PDF 存放目录 (默认同下载目录)
+download_dir: /AstrBot/data/jmcomic/  # 下载目录（需 NapCat 可访问）
+allow_groups: []                       # 群白名单，空=不限制
+allow_users: []                        # 用户白名单，空=不限制
+max_concurrent: 1                      # 同时下载数
+auto_clean: true                       # 完成后自动清理临时文件
+failed_placeholder: ""                 # 下载失败时填补的占位图（默认插件目录内）
+command_prefix: "/"                    # 命令前缀
 
-# ── Permission ──
-allow_groups: []                   # 允许使用的群号白名单，空列表表示无限制
-allow_users: []                    # 允许使用的用户 QQ 号白名单，空列表表示无限制
-
-# ── File Limits ──
-max_concurrent: 1                  # 同时下载任务数
-
-# ── Behavior ──
-auto_clean: true                   # 发送成功后是否删除本地临时文件
-bot_uin: 1000000                   # 合并转发消息中的发送者 QQ (可写机器人自身 QQ)
-bot_name: "JMComic"                # 合并转发消息中的发送者昵称
-batch_size: 30                     # 每批合并转发发送的图片数
-command_prefix: "/"                # 命令前缀
-
-# ── JMComic 客户端配置 (可选) ──
+# JMComic 客户端高级配置
 jmcomic_config:
-  # 下载线程数
   threading_image: 10
   threading_photo: 2
-
-  # 自定义域名 (默认 jmcomic 自动获取)
   # domains:
   #   - 18comic.vip
-
-  # 代理设置 (可选)
   # proxies:
   #   http: http://127.0.0.1:7890
   #   https: http://127.0.0.1:7890

@@ -9,6 +9,7 @@ import re
 import asyncio
 import logging
 import functools
+import atexit
 import random
 import shutil
 import threading
@@ -75,9 +76,7 @@ class JmcomicPlugin(Star):
         self._confirm_lock = asyncio.Lock()
         self._cancel_events: dict = {}
         self._cancel_lock = asyncio.Lock()
-
-    def __del__(self):
-        self._executor.shutdown(wait=False)
+        atexit.register(self._executor.shutdown, wait=False)
 
     # ── JMComic Option ─────────────────────────────────────
 
@@ -205,7 +204,7 @@ class JmcomicPlugin(Star):
                 return list(client.search_author(search_query=aname, page=1))
             return []
         if tag:
-            return list(client.search_site(search_query=tag, page=1, order_by="mr", time="a", category="0"))
+            return list(client.search_site(search_query=tag, page=random.randint(1, 5), order_by="mr", time="a", category="0"))
         return list(client.categories_filter(page=random.randint(1, 50), time="a", category="0", order_by="mr"))
 
     def _fill_missing_images(self, image_dir: str):
@@ -246,19 +245,20 @@ class JmcomicPlugin(Star):
             photo_id = ep[0]
             photo_title = ep[2] if len(ep) >= 3 else f"第{len(chapters) + 1}话"
 
-            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=False)
+            ch_dir = os.path.join(work_dir, album.album_id, str(photo_id))
+            # Download + generate PDF
+            extra = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
             try:
                 opt.download_photo(photo_id, extra=extra)
             except PartialDownloadFailedException as e:
                 logger.warning("Chapter %s partial failure: %s", photo_id, e)
 
-            # Fill gaps after PDF generation (PDF already has gaps)
-            ch_dir = os.path.join(work_dir, album.album_id, str(photo_id))
-            self._fill_missing_images(ch_dir)
-
-            # Regenerate PDF with filled images
-            extra2 = Feature.export_pdf(pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True)
-            opt.download_photo(photo_id, extra=extra2)
+            # If some images failed, fill gaps and regenerate PDF
+            if os.path.isdir(ch_dir):
+                self._fill_missing_images(ch_dir)
+                # regenerate PDF (images already on disk, cache skips re-download)
+                opt.download_photo(photo_id, extra=Feature.export_pdf(
+                    pdf_dir=work_dir, filename_rule="Pid", delete_original_file=True))
 
             pdf_path = os.path.join(work_dir, f"{photo_id}.pdf")
             if not os.path.isfile(pdf_path):
@@ -288,15 +288,16 @@ class JmcomicPlugin(Star):
             logger.error("Cannot send: no group_id or bot")
             return
 
+        ok = 0
         for ch in chapters:
             pdf_path = ch.get("pdf_path")
             if not pdf_path or not os.path.isfile(pdf_path):
                 continue
 
-            try:
-                file_name = f"document_{ch['photo_id']}.pdf"
-                file_seg = [{"type": "file", "data": {"file": pdf_path, "name": file_name}}]
+            file_name = f"document_{ch['photo_id']}.pdf"
+            file_seg = [{"type": "file", "data": {"file": pdf_path, "name": file_name}}]
 
+            try:
                 try:
                     msg_resp = await bot.call_action("send_private_msg", user_id=int(user_id), message=file_seg)
                 except Exception:
@@ -312,16 +313,17 @@ class JmcomicPlugin(Star):
                     "send_group_forward_msg", group_id=group_id,
                     messages=[{"type": "node", "data": {"id": int(msg_id)}}],
                 )
-
                 if isinstance(fwd, dict) and fwd.get("res_id"):
                     try:
                         await bot.call_action("delete_msg", message_id=int(msg_id))
                     except Exception:
                         pass
+                    ok += 1
                 else:
                     logger.warning("Forward may have been blocked for %s", ch["title"])
             except Exception as e:
                 logger.error("Failed to send %s: %s", ch["title"], e)
+        return ok
 
     # ── File cleanup ───────────────────────────────────────
 
@@ -495,7 +497,12 @@ class JmcomicPlugin(Star):
                 uid = event.get_sender_id()
                 ckey = f"{uid}:{album_id}"
                 async with self._confirm_lock:
-                    if self._pending_confirm.get(ckey) != True:
+                    now = __import__("time").time()
+                    stale = [k for k, v in self._pending_confirm.items() if isinstance(v, (int, float)) and now - v > 600]
+                    for k in stale:
+                        del self._pending_confirm[k]
+
+                    if self._pending_confirm.get(ckey) is not True:
                         self._pending_confirm[ckey] = True
                         yield event.plain_result(
                             f"《{title}》共 {pc} 页（超过100页），再次发送相同命令确认下载。"
@@ -530,13 +537,16 @@ class JmcomicPlugin(Star):
                 return
 
             try:
-                await self._send_pdfs_forward(event, chapters, title)
+                sent = await self._send_pdfs_forward(event, chapters, title)
             except Exception as e:
                 logger.exception("Send failed")
                 yield event.plain_result(f"发送失败: {e}")
                 return
 
-            yield event.plain_result(f"《{title}》发送完成")
+            if sent:
+                yield event.plain_result(f"《{title}》发送完成 ({sent}章)")
+            else:
+                yield event.plain_result(f"《{title}》发送失败：所有章节均未发出")
 
             if self.auto_clean:
                 self._cleanup_files(work_dir)
